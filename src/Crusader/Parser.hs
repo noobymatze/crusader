@@ -5,15 +5,15 @@ module Crusader.Parser
   ) where
 
 
-import           Control.Applicative        ((<|>))
-import qualified Crusader.Annotation        as A
-import qualified Crusader.Expr              as C
-import qualified Data.Char                  as Char
-import qualified Data.Text                  as T
-import           Data.Void                  (Void)
-import qualified Text.Megaparsec            as M
-import qualified Text.Megaparsec.Char       as C
-import qualified Text.Megaparsec.Char.Lexer as L
+import           Control.Applicative           ((<|>))
+import qualified Crusader.Expr                 as Expr
+import qualified Crusader.Reporting.Annotation as A
+import qualified Data.Char                     as Char
+import qualified Data.Text                     as T
+import           Data.Void                     (Void)
+import qualified Text.Megaparsec               as M
+import qualified Text.Megaparsec.Char          as C
+import qualified Text.Megaparsec.Char.Lexer    as L
 
 
 
@@ -27,7 +27,7 @@ type Parser = M.Parsec Void T.Text
 -- RUN PARSER
 
 
-parse :: T.Text -> Either (M.ParseErrorBundle T.Text Void) C.Expr
+parse :: T.Text -> Either (M.ParseErrorBundle T.Text Void) Expr.Expr
 parse =
   M.parse expression ""
 
@@ -41,60 +41,72 @@ parseTest =
 -- EXPRESSIONS
 
 
-expression :: Parser C.Expr
+expression :: Parser Expr.Expr
 expression =
   M.choice
-  [ lexeme (located symbol)
+  [ lexeme (located boolean)
+  , lexeme (located symbol)
   , lexeme (located number)
   , lexeme (located string)
   , lexeme (located (collection expression))
   ]
 
 
-collection :: Parser C.Expr -> Parser C.Value
+collection :: Parser Expr.Expr -> Parser Expr.Value
 collection p =
   let
     items =
       spaces >> M.manyTill (spaces >> p) (M.lookAhead (C.char ')'))
   in
-    C.List <$> M.between (C.char '(') (C.char ')') items
+    Expr.List <$> M.between (C.char '(') (C.char ')') items
 
 
-symbol :: Parser C.Value
+symbol :: Parser Expr.Value
 symbol = do
   first <- M.oneOf symbolStartChars
   rest  <- M.takeWhileP (Just "symbol name") (`elem` symbolChars)
-  pure (C.Symbol (T.cons first rest))
+  pure (Expr.Symbol (T.cons first rest))
 
 
-number :: Parser C.Value
+number :: Parser Expr.Value
 number =
   M.try float <|> int
 
 
-int :: Parser C.Value
+int :: Parser Expr.Value
 int =
   L.signed (pure ()) L.decimal
-  |> fmap C.IntLit
+  |> fmap Expr.IntLit
 
 
-float :: Parser C.Value
+float :: Parser Expr.Value
 float =
   L.signed (pure ()) L.float
-  |> fmap C.FloatLit
+  |> fmap Expr.FloatLit
 
 
-string :: Parser C.Value
+string :: Parser Expr.Value
 string =
   let
-    escaped = do
-      _ <- C.char '\\'
-      M.anySingle
+    escaped =
+      C.char '\\' >> M.anySingle
 
     strHelp =
       M.try escaped <|> M.anySingleBut '"'
   in
-    fmap C.StrLit (T.pack <$> M.between (C.char '"') (C.char '"') (M.many strHelp))
+    fmap Expr.StrLit (T.pack <$> M.between (C.char '"') (C.char '"') (M.many strHelp))
+
+
+boolean :: Parser Expr.Value
+boolean =
+  let
+    true =
+      C.string "true" >> pure True
+
+    false =
+      C.string "false" >> pure False
+  in
+    fmap Expr.Boolean (true <|> false)
 
 
 

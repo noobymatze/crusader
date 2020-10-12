@@ -4,8 +4,8 @@ module Crusader.Expr
   ) where
 
 
-import qualified Crusader.Annotation as A
-import qualified Data.Text           as T
+import qualified Crusader.Reporting.Annotation as A
+import qualified Data.Text                     as T
 
 
 
@@ -21,5 +21,6 @@ data Value
   | StrLit T.Text
   | FloatLit Double
   | Symbol T.Text
+  | Boolean Bool
   | List [Expr]
   deriving (Show)

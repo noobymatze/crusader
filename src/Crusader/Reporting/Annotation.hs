@@ -1,4 +1,4 @@
-module Crusader.Annotation
+module Crusader.Reporting.Annotation
   ( Located (..)
   , Position (..)
   ) where
