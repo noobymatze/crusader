@@ -46,6 +46,7 @@ expression =
   M.choice
   [ lexeme (located symbol)
   , lexeme (located number)
+  , lexeme (located string)
   , lexeme (located (collection expression))
   ]
 
@@ -81,6 +82,19 @@ float :: Parser C.Value
 float =
   L.signed (pure ()) L.float
   |> fmap C.FloatLit
+
+
+string :: Parser C.Value
+string =
+  let
+    escaped = do
+      _ <- C.char '\\'
+      M.anySingle
+
+    strHelp =
+      M.try escaped <|> M.anySingleBut '"'
+  in
+    fmap C.StrLit (T.pack <$> M.between (C.char '"') (C.char '"') (M.many strHelp))
 
 
 
