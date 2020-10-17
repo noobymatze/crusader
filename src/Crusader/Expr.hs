@@ -17,10 +17,11 @@ type Expr =
 
 
 data Value
-  = IntLit Integer
+  = Nil
+  | IntLit Integer
   | StrLit T.Text
   | FloatLit Double
   | Symbol T.Text
   | Boolean Bool
   | List [Expr]
-  deriving (Show)
+  deriving (Show, Eq)

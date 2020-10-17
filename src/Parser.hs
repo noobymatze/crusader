@@ -1,19 +1,21 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Crusader.Parser
-  ( parse
+module Parser
+  ( Error (..)
+  , parse
   , parseTest
   ) where
 
 
-import           Control.Applicative           ((<|>))
-import qualified Crusader.Expr                 as Expr
-import qualified Crusader.Reporting.Annotation as A
-import qualified Data.Char                     as Char
-import qualified Data.Text                     as T
-import           Data.Void                     (Void)
-import qualified Text.Megaparsec               as M
-import qualified Text.Megaparsec.Char          as C
-import qualified Text.Megaparsec.Char.Lexer    as L
+import qualified AST.Name                   as Name
+import qualified AST.Source                 as Src
+import           Control.Applicative        ((<|>))
+import qualified Data.Char                  as Char
+import qualified Data.Text                  as T
+import           Data.Void                  (Void)
+import qualified Reporting.Annotation       as A
+import qualified Text.Megaparsec            as M
+import qualified Text.Megaparsec.Char       as C
+import qualified Text.Megaparsec.Char.Lexer as L
 
 
 
@@ -23,13 +25,23 @@ import qualified Text.Megaparsec.Char.Lexer    as L
 type Parser = M.Parsec Void T.Text
 
 
+data Error
+  = Parsec (M.ParseErrorBundle T.Text Void)
+  deriving (Show)
+
+
 
 -- RUN PARSER
 
 
-parse :: T.Text -> Either (M.ParseErrorBundle T.Text Void) Expr.Expr
-parse =
-  M.parse expression ""
+parse :: T.Text -> Either Error Src.Expr
+parse input =
+  case M.parse expression "" input of
+    Left err ->
+      Left (Parsec err)
+
+    Right value ->
+      Right value
 
 
 parseTest :: T.Text -> IO ()
@@ -41,10 +53,11 @@ parseTest =
 -- EXPRESSIONS
 
 
-expression :: Parser Expr.Expr
+expression :: Parser Src.Expr
 expression =
   M.choice
   [ lexeme (located boolean)
+  , lexeme (located nil)
   , lexeme (located symbol)
   , lexeme (located number)
   , lexeme (located string)
@@ -52,40 +65,42 @@ expression =
   ]
 
 
-collection :: Parser Expr.Expr -> Parser Expr.Value
+collection :: Parser Src.Expr -> Parser Src.Value
 collection p =
   let
     items =
       spaces >> M.manyTill (spaces >> p) (M.lookAhead (C.char ')'))
   in
-    Expr.List <$> M.between (C.char '(') (C.char ')') items
+    Src.List <$> M.between (C.char '(') (C.char ')') items
 
 
-symbol :: Parser Expr.Value
+symbol :: Parser Src.Value
 symbol = do
   first <- M.oneOf symbolStartChars
   rest  <- M.takeWhileP (Just "symbol name") (`elem` symbolChars)
-  pure (Expr.Symbol (T.cons first rest))
+  pure (Src.Symbol (Name.fromText (T.cons first rest)))
 
 
-number :: Parser Expr.Value
+number :: Parser Src.Value
 number =
   M.try float <|> int
 
 
-int :: Parser Expr.Value
+int :: Parser Src.Value
 int =
   L.signed (pure ()) L.decimal
-  |> fmap Expr.IntLit
+  |> fmap Src.Int
+  |> fmap Src.Number
 
 
-float :: Parser Expr.Value
+float :: Parser Src.Value
 float =
   L.signed (pure ()) L.float
-  |> fmap Expr.FloatLit
+  |> fmap Src.Float
+  |> fmap Src.Number
 
 
-string :: Parser Expr.Value
+string :: Parser Src.Value
 string =
   let
     escaped =
@@ -94,10 +109,10 @@ string =
     strHelp =
       M.try escaped <|> M.anySingleBut '"'
   in
-    fmap Expr.StrLit (T.pack <$> M.between (C.char '"') (C.char '"') (M.many strHelp))
+    fmap Src.StrLit (T.pack <$> M.between (C.char '"') (C.char '"') (M.many strHelp))
 
 
-boolean :: Parser Expr.Value
+boolean :: Parser Src.Value
 boolean =
   let
     true =
@@ -106,7 +121,12 @@ boolean =
     false =
       C.string "false" >> pure False
   in
-    fmap Expr.Boolean (true <|> false)
+    fmap Src.Boolean (true <|> false)
+
+
+nil :: Parser Src.Value
+nil =
+  C.string "nil" >> pure Src.Nil
 
 
 
@@ -167,4 +187,3 @@ symbolStartChars =
 symbolChars :: String
 symbolChars =
   symbolStartChars <> digits
-

@@ -1,6 +1,7 @@
-module Crusader.Reporting.Annotation
+module Reporting.Annotation
   ( Located (..)
   , Position (..)
+  , at
   ) where
 
 
@@ -12,7 +13,7 @@ data Position
   = Position
     { start :: Int
     , end   :: Int
-    } deriving (Show)
+    } deriving (Show, Eq, Ord)
 
 
 
@@ -21,4 +22,13 @@ data Position
 
 data Located a
   = At Position a
-  deriving (Show)
+  deriving (Show, Eq, Ord)
+
+
+
+-- WORKING
+
+
+at :: Position -> a -> Located a
+at =
+  At

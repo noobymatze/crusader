@@ -1,6 +1,7 @@
 module Main where
 
-import           Crusader.Parser
+import           Eval
+import           Parser
 
 main :: IO ()
 main = do
