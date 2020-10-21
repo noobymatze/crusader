@@ -1,15 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 module Eval
-  ( eval
-  , evalText
+  ( Error (..)
+  , eval
   ) where
 
 
 import qualified AST.Name             as Name
 import qualified AST.Source           as Src
+import           Control.Monad        ((>=>))
+import qualified Control.Monad        as Monad
 import qualified Data.Map             as Map
 import qualified Data.Text            as T
-import qualified Parser
+import qualified Eval.Environment     as Env
 import qualified Reporting.Annotation as A
 import qualified Reporting.OneOrMore  as OneOrMore
 import qualified Reporting.Result     as Result
@@ -18,119 +21,270 @@ import qualified Reporting.Result     as Result
 
 -- EVAL
 
+
 type Result = Result.Result [T.Text] [T.Text] Error
 
 
-data Environment
-  = Environment
-    { map :: Map.Map Name.Name Src.Value
-    } deriving (Show)
+newtype Eval a
+  = Eval
+    { _runEval :: Env.Environment -> (Result a, Env.Environment)
+    }
 
 
 data Error
-  = TypeMismatch Type Src.Expr
-  | Syntax Parser.Error
+  = TypeMismatch T.Text Src.Expr
+  | ArityMismatch Arity Src.Expr
+  | UnknownSymbol Src.Expr
   deriving (Show)
 
 
-data Type
-  = Number
-  | Str
-  | Boolean
-  deriving (Show, Eq)
+data Arity
+  = Exactly Int
+  | AtLeast Int
+  deriving (Show)
 
 
 
--- EVAL
+-- WORK WITH EVAL
 
 
-evalText :: T.Text -> Result Src.Expr
-evalText input =
-  case Parser.parse input of
-    Left err ->
-      Result.throw (OneOrMore.one (Syntax err))
+throw :: OneOrMore.OneOrMore Error -> Eval a
+throw v =
+  Eval $ \env -> (Result.throw v, env)
 
-    Right expr ->
-      eval expr
 
+access :: Eval Env.Environment
+access =
+  Eval $ \env -> (Result.ok env, env)
+
+
+update :: (Env.Environment -> Env.Environment) -> Eval ()
+update f = Eval $ \env ->
+  (Result.ok (), f env)
+
+
+
+-- EVALUATE EXPRESSIONS
 
 
 eval :: Src.Expr -> Result Src.Expr
 eval =
-  eval_ (Environment Map.empty)
+  fst . flip _runEval Env.empty . evalHelp
 
 
-eval_ :: Environment -> Src.Expr -> Result Src.Expr
-eval_ env e@(A.At position expr) =
-  case expr of
+evalHelp :: Src.Expr -> Eval Src.Expr
+evalHelp expr@(A.At position value) =
+  case value of
     Src.Nil ->
-      Result.ok e
+      pure expr
 
     Src.Number _ ->
-      Result.ok e
+      pure expr
 
     Src.StrLit _ ->
-      Result.ok e
+      pure expr
 
-    Src.Symbol symbol ->
-      -- GET FROM ENV
-      undefined
+    Src.Boolean _ ->
+      pure expr
+
+    Src.Symbol symbol -> do
+      env <- access
+      case Env.lookup symbol env of
+        Nothing ->
+          throw (OneOrMore.one (UnknownSymbol expr))
+
+        Just foundExpr ->
+          pure foundExpr
 
     Src.List expressions ->
-      evalList env position expressions
+      evalList expr expressions
 
 
-evalList :: Environment -> A.Position -> [Src.Expr] -> Result Src.Expr
-evalList env pos expressions =
+evalList :: Src.Expr -> [Src.Expr] -> Eval Src.Expr
+evalList originalExpr expressions =
   case expressions of
     [] ->
-      Result.ok (A.at pos (Src.List []))
+      pure originalExpr
+
+    (A.At _ (Src.Symbol "def"):A.At pos (Src.Symbol name):expr:[]) -> do
+      expr' <- evalHelp expr
+      update (Env.def name expr')
+      pure (A.At pos (Src.Symbol name))
+
+    (A.At _ (Src.Symbol "if"):condition:then_:else_:[]) -> do
+      expr <- evalHelp condition
+      cond <- unpackBool expr
+      if cond then
+        evalHelp then_
+      else
+        evalHelp else_
 
     (A.At _ (Src.Symbol func):args) ->
-      apply env pos func args
+      apply originalExpr func args
 
 
-apply :: Environment -> A.Position -> Name.Name -> [Src.Expr] -> Result Src.Expr
-apply env pos func args =
-  case func of
-    "+" ->
-      let
-        evaled =
-          args
-          |> fmap (\subExpr -> eval_ env subExpr >>= unpackNumber)
-          |> fmap (fmap (:[]))
-          |> mconcat
-      in
-        fmap (A.at pos . Src.Number . foldl add (Src.Int 0)) evaled
+apply :: Src.Expr -> Name.Name -> [Src.Expr] -> Eval Src.Expr
+apply expr func args =
+  case Map.lookup func builtins of
+    Nothing ->
+      throw (OneOrMore.one (UnknownSymbol expr))
 
-    "-" ->
-      undefined
+    Just function ->
+      function expr args
 
 
-add :: Src.Number -> Src.Number -> Src.Number
-add aexpr bexpr =
-  case (aexpr, bexpr) of
-    (Src.Int a, Src.Int b) ->
-      Src.Int (a + b)
 
-    (Src.Float a, Src.Int b) ->
-      Src.Float (a + fromIntegral b)
-
-    (Src.Int _, Src.Float _) ->
-      add bexpr aexpr
-
-    (Src.Float a, Src.Float b) ->
-      Src.Float (a + b)
+-- BUILTIN FUNCTIONS
 
 
-unpackNumber :: Src.Expr -> Result Src.Number
-unpackNumber e@(A.At pos expr) =
+type Primitive
+  = Src.Expr -> [Src.Expr] -> Eval Src.Expr
+
+
+data BuiltinFunction a
+  = BuiltinFunction
+      { _name    :: Name.Name
+      , _arity   :: Arity
+      , _unpack  :: Src.Expr -> Eval a
+      , _combine :: [a] -> Src.Value
+      }
+
+
+builtins :: Map.Map Name.Name Primitive
+builtins =
+  Map.fromList
+  [ builtin add
+  , builtin sub
+  , builtin mult
+  , builtin greaterThan
+  , builtin greaterOrEqual
+  , builtin eq
+  ]
+
+
+builtin :: BuiltinFunction a -> (Name.Name, Primitive)
+builtin function =
+  ( _name function
+  , fn function
+  )
+
+
+add :: BuiltinFunction Src.Number
+add =
+  BuiltinFunction
+    { _name = "+"
+    , _unpack = unpackNumber
+    , _combine = Src.Number . sum
+    , _arity = AtLeast 0
+    }
+
+
+sub :: BuiltinFunction Src.Number
+sub =
+  BuiltinFunction
+  { _name = "-"
+  , _unpack = unpackNumber
+  , _combine = Src.Number . foldl1 (-)
+  , _arity = AtLeast 1
+  }
+
+
+mult :: BuiltinFunction Src.Number
+mult =
+  BuiltinFunction
+  { _name = "*"
+  , _unpack = unpackNumber
+  , _combine = Src.Number . product
+  , _arity = AtLeast 0
+  }
+
+
+greaterThan :: BuiltinFunction Src.Number
+greaterThan =
+  BuiltinFunction
+  { _name = ">"
+  , _unpack = unpackNumber
+  , _arity = AtLeast 1
+  , _combine = Src.Boolean . and . zipWithNext (>)
+  }
+
+
+greaterOrEqual :: BuiltinFunction Src.Number
+greaterOrEqual =
+  BuiltinFunction
+  { _name = ">="
+  , _unpack = unpackNumber
+  , _arity = AtLeast 1
+  , _combine = Src.Boolean . and . zipWithNext (>=)
+  }
+
+
+eq :: BuiltinFunction Src.Value
+eq =
+  BuiltinFunction
+  { _name = "="
+  , _unpack = pure . A.value
+  , _arity = AtLeast 1
+  , _combine = Src.Boolean . and . zipWithNext (==)
+  }
+
+
+fn :: BuiltinFunction a -> Primitive
+fn (BuiltinFunction _ arity unpack combine) expr@(A.At pos _) args = do
+  _ <- checkArity arity expr args
+  evaledArgs <- Monad.mapM (evalHelp >=> unpack) args
+  let result = combine evaledArgs
+  pure (A.at pos result)
+
+
+checkArity :: Arity -> Src.Expr -> [Src.Expr] -> Eval ()
+checkArity arity expr args =
+  case arity of
+    AtLeast i ->
+      if length args >= i then
+        pure ()
+      else
+        throw (OneOrMore.one (ArityMismatch arity expr))
+
+    Exactly i ->
+      if length args == i then
+        pure ()
+      else
+        throw (OneOrMore.one (ArityMismatch arity expr))
+
+
+
+-- UNPACKING
+
+
+unpackNumber :: Src.Expr -> Eval Src.Number
+unpackNumber e@(A.At _ expr) =
   case expr of
     Src.Number number ->
-      Result.ok number
+      pure number
 
     _ ->
-      Result.throw (OneOrMore.one (TypeMismatch Number e))
+      throw (OneOrMore.one (TypeMismatch "number" e))
+
+
+unpackString :: Src.Expr -> Eval T.Text
+unpackString e@(A.At _ expr) =
+  case expr of
+    Src.StrLit string ->
+      pure string
+
+    _ ->
+      throw (OneOrMore.one (TypeMismatch "string" e))
+
+
+unpackBool :: Src.Expr -> Eval Bool
+unpackBool e@(A.At _ expr) =
+  case expr of
+    Src.Boolean value ->
+      pure value
+
+    _ ->
+      throw (OneOrMore.one (TypeMismatch "boolean" e))
 
 
 
@@ -140,3 +294,58 @@ unpackNumber e@(A.At pos expr) =
 (|>) :: a -> (a -> b) -> b
 (|>) a f =
   f a
+
+
+zipWithNext :: (a -> a -> b) -> [a] -> [b]
+zipWithNext f xs =
+  zipWith f xs (drop 1 xs)
+
+
+
+-- FANCY HELPERS
+
+
+instance Functor Eval where
+  fmap f (Eval run) = Eval $ \env ->
+    let
+      (result, newEnv) =
+        run env
+    in
+      (fmap f result, newEnv)
+
+
+instance Applicative Eval where
+  pure a = Eval $ \env -> (pure a, env)
+  Eval runf <*> Eval run = Eval $ \env ->
+    let
+      (resultf, _) =
+        runf env
+
+      (result, newEnv) =
+        run env
+    in
+      (resultf <*> result, newEnv)
+
+
+instance Monad Eval where
+  Eval run >>= k = Eval $ \env ->
+    let
+      (result, newEnv) =
+        run env
+
+      Result.Result i w a = result >>= \value ->
+        let
+          Eval run' =
+            k value
+
+          (r, env') =
+            run' newEnv
+        in
+          fmap (\v -> (v, env')) r
+    in
+      case a of
+        Result.Err err ->
+          (Result.Result i w (Result.Err err), newEnv)
+
+        Result.Ok (v, env'') ->
+          (Result.Result i w (Result.Ok v), env'')

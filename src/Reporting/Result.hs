@@ -1,12 +1,14 @@
 module Reporting.Result
-  ( Result
+  ( Result (..)
   , Answer (..)
   , ok
   , throw
+  , toEither
   ) where
 
 
 import qualified Reporting.OneOrMore as OneOrMore
+
 
 
 -- RESULT
@@ -52,6 +54,16 @@ throw err =
 -- WORKING WITH RESULTS
 
 
+toEither :: Result i w e a -> Either (OneOrMore.OneOrMore e) a
+toEither result =
+  case _answer result of
+    Err err ->
+      Left err
+
+    Ok value ->
+      Right value
+
+
 
 -- FANCY HELPERS
 
@@ -71,16 +83,16 @@ instance Applicative (Result i w e) where
   Result i1 w1 fa <*> Result i2 w2 va =
     case (fa, va) of
       (Ok f, Ok value) ->
-        Result i2 w2 (Ok (f value))
+        Result (i1 <> i2) (w1 <> w2) (Ok (f value))
 
       (Ok _, Err e1) ->
-        Result i2 w2 (Err e1)
+        Result (i1 <> i2) (w1 <> w2) (Err e1)
 
       (Err e1, Ok _) ->
-        Result i2 w2 (Err e1)
+        Result (i1 <> i2) (w1 <> w2) (Err e1)
 
       (Err e1, Err e2) ->
-        Result i2 w2 (Err (OneOrMore.more e1 e2))
+        Result (i1 <> i2) (w1 <> w2) (Err (OneOrMore.more e1 e2))
 
 
 

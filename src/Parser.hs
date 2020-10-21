@@ -129,6 +129,12 @@ nil =
   C.string "nil" >> pure Src.Nil
 
 
+namespace :: Parser Src.Value
+namespace =
+  undefined
+
+
+
 
 -- LOCATION AND OTHER HELPERS
 
@@ -176,7 +182,7 @@ upperLetters =
 
 miscChars :: String
 miscChars =
-  ".*+!-_?$%&=<>"
+  "/.*+!-_?$%&=<>"
 
 
 symbolStartChars :: String

@@ -2,6 +2,7 @@ module Reporting.Annotation
   ( Located (..)
   , Position (..)
   , at
+  , value
   ) where
 
 
@@ -26,9 +27,14 @@ data Located a
 
 
 
--- WORKING
+-- WORKING WITH ANNOTATION
 
 
 at :: Position -> a -> Located a
 at =
   At
+
+
+value :: Located a -> a
+value (At _ v) =
+  v
