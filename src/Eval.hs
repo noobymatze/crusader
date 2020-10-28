@@ -12,6 +12,7 @@ import           Control.Monad        ((>=>))
 import qualified Control.Monad        as Monad
 import qualified Data.Map             as Map
 import qualified Data.Text            as T
+import           Debug.Trace
 import qualified Eval.Environment     as Env
 import qualified Reporting.Annotation as A
 import qualified Reporting.OneOrMore  as OneOrMore
@@ -67,13 +68,14 @@ update f = Eval $ \env ->
 -- EVALUATE EXPRESSIONS
 
 
-eval :: Src.Expr -> Result Src.Expr
-eval =
-  fst . flip _runEval Env.empty . evalHelp
+eval :: Src.Program -> Result [Src.Expr]
+eval (Src.Program expressions) =
+  traceShow expressions $
+    fst $ _runEval (traverse evalHelp expressions) Env.empty
 
 
 evalHelp :: Src.Expr -> Eval Src.Expr
-evalHelp expr@(A.At position value) =
+evalHelp expr@(A.At _ value) =
   case value of
     Src.Nil ->
       pure expr
@@ -107,8 +109,8 @@ evalList originalExpr expressions =
       pure originalExpr
 
     (A.At _ (Src.Symbol "def"):A.At pos (Src.Symbol name):expr:[]) -> do
-      expr' <- evalHelp expr
-      update (Env.def name expr')
+      evaled <- evalHelp expr
+      update (Env.def name evaled)
       pure (A.At pos (Src.Symbol name))
 
     (A.At _ (Src.Symbol "if"):condition:then_:else_:[]) -> do
@@ -159,6 +161,7 @@ builtins =
   , builtin greaterThan
   , builtin greaterOrEqual
   , builtin eq
+  , builtin str
   ]
 
 
@@ -235,6 +238,16 @@ fn (BuiltinFunction _ arity unpack combine) expr@(A.At pos _) args = do
   evaledArgs <- Monad.mapM (evalHelp >=> unpack) args
   let result = combine evaledArgs
   pure (A.at pos result)
+
+
+str :: BuiltinFunction T.Text
+str =
+  BuiltinFunction
+  { _name = "str"
+  , _unpack = unpackString
+  , _arity = AtLeast 0
+  , _combine = Src.StrLit . T.intercalate ""
+  }
 
 
 checkArity :: Arity -> Src.Expr -> [Src.Expr] -> Eval ()
@@ -316,15 +329,10 @@ instance Functor Eval where
 
 instance Applicative Eval where
   pure a = Eval $ \env -> (pure a, env)
-  Eval runf <*> Eval run = Eval $ \env ->
-    let
-      (resultf, _) =
-        runf env
-
-      (result, newEnv) =
-        run env
-    in
-      (resultf <*> result, newEnv)
+  a <*> b = do
+    f <- a
+    v <- b
+    pure (f v)
 
 
 instance Monad Eval where
@@ -347,5 +355,5 @@ instance Monad Eval where
         Result.Err err ->
           (Result.Result i w (Result.Err err), newEnv)
 
-        Result.Ok (v, env'') ->
-          (Result.Result i w (Result.Ok v), env'')
+        Result.Ok (v, env') ->
+          (Result.Result i w (Result.Ok v), env')

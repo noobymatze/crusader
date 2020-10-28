@@ -34,9 +34,9 @@ data Error
 -- RUN PARSER
 
 
-parse :: T.Text -> Either Error Src.Expr
+parse :: T.Text -> Either Error Src.Program
 parse input =
-  case M.parse expression "" input of
+  case M.parse program "" input of
     Left err ->
       Left (Parsec err)
 
@@ -46,11 +46,16 @@ parse input =
 
 parseTest :: T.Text -> IO ()
 parseTest =
-  M.parseTest expression
+  M.parseTest program
 
 
 
 -- EXPRESSIONS
+
+
+program :: Parser Src.Program
+program =
+  Src.Program <$> M.many (spaces *> expression <* spaces)
 
 
 expression :: Parser Src.Expr
@@ -127,12 +132,6 @@ boolean =
 nil :: Parser Src.Value
 nil =
   C.string "nil" >> pure Src.Nil
-
-
-namespace :: Parser Src.Value
-namespace =
-  undefined
-
 
 
 

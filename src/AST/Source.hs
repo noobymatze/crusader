@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module AST.Source
-  ( Expr
+  ( Program (..)
+  , Expr
   , Value (..)
   , Number (..)
   , toString
@@ -14,6 +15,11 @@ import qualified Reporting.Annotation as A
 
 
 -- AST
+
+
+newtype Program
+  = Program [Expr]
+  deriving (Show)
 
 
 type Expr

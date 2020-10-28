@@ -16,7 +16,7 @@ import qualified Reporting.Result     as Result
 -- INTERPRET
 
 
-interpret :: T.Text -> Either Error.Error Src.Value
+interpret :: T.Text -> Either Error.Error [Src.Expr]
 interpret input =
   case Parser.parse input of
     Left err ->
@@ -28,5 +28,5 @@ interpret input =
         Left err ->
           Left (Error.Eval err)
 
-        Right (A.At _ value) ->
+        Right value ->
           Right value
