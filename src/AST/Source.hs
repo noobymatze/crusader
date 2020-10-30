@@ -18,8 +18,16 @@ import qualified Reporting.Annotation as A
 
 
 newtype Program
-  = Program [Expr]
+  = Program [Namespace]
   deriving (Show)
+
+
+data Namespace
+  = Namespace
+  { _name        :: T.Text
+  , _imports     :: [Expr]
+  , _expressions :: [Expr]
+  } deriving (Show)
 
 
 type Expr
